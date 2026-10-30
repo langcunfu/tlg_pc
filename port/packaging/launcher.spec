@@ -37,6 +37,10 @@ for path in sorted(qt_dir.rglob('*')):
         continue
     qt_datas.append((str(path), str(Path('qt') / path.relative_to(qt_dir).parent)))
 qt_datas.append((str(root / 'launcher' / 'tlg.png'), '.'))   # window icon (qt/app.py: qt/../tlg.png)
+# Simplified-Chinese translations for the adapter (tlg_localization._load_pairs reads it next
+# to the module, which PyInstaller unpacks to _internal/launcher). Both launchers need it.
+zh_json = (str(root / 'launcher' / 'tlg_localization-zh.json'), 'launcher')
+qt_datas.append(zh_json)
 
 
 def analysis(script, datas=(), excludes=()):
@@ -93,7 +97,7 @@ def keep(entry):
 qt_a = analysis(os.environ['TLG_SPEC_QT'], qt_datas, qt_excludes)
 qt_a.binaries = [entry for entry in qt_a.binaries if keep(entry)]
 qt_a.datas = [entry for entry in qt_a.datas if keep(entry)]
-tk_a = analysis(os.environ['TLG_SPEC_TK'], excludes=['PySide6', 'shiboken6'])
+tk_a = analysis(os.environ['TLG_SPEC_TK'], datas=[zh_json], excludes=['PySide6', 'shiboken6'])
 
 
 def program(a, exe_name):

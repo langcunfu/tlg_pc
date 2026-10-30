@@ -50,10 +50,23 @@ def _dbg(message):
 def _load_pairs():
     global _PAIRS
     if not _PAIRS:
+        candidates = [HERE / 'tlg_localization-zh.json']
+        # PyInstaller (sys._MEIPASS) unpacks the bundle to _internal; the spec ships the
+        # dictionary at _internal/launcher/tlg_localization-zh.json, beside the module.
         try:
-            _PAIRS = json.loads((HERE / 'tlg_localization-zh.json').read_text(encoding='utf-8'))
-        except (OSError, ValueError):
-            _PAIRS = {}
+            meipass = Path(getattr(sys, '_MEIPASS', ''))
+            if meipass.is_dir():
+                candidates += [meipass / 'launcher' / 'tlg_localization-zh.json',
+                               meipass / 'tlg_localization-zh.json']
+        except (TypeError, OSError):
+            pass
+        for path in candidates:
+            try:
+                _PAIRS = json.loads(path.read_text(encoding='utf-8'))
+                return _PAIRS
+            except (OSError, ValueError):
+                continue
+        _PAIRS = {}
     return _PAIRS
 
 
