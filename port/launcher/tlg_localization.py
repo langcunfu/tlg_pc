@@ -35,6 +35,18 @@ _installed = False
 _PAIRS = {}
 
 
+def _dbg(message):
+    """Diagnostics for the UI-language path (written next to the adapter; useful on Windows
+    where the launcher has no console). Quiet by default unless TLG_LOCALIZATION_DEBUG=1."""
+    if os.environ.get('TLG_LOCALIZATION_DEBUG') != '1':
+        return
+    try:
+        with (HERE / 'tlg_localization.log').open('a', encoding='utf-8') as f:
+            f.write(message + '\n')
+    except OSError:
+        pass
+
+
 def _load_pairs():
     global _PAIRS
     if not _PAIRS:
@@ -55,7 +67,17 @@ def _system_is_chinese(environ=None):
         import locale
         return (locale.getlocale()[0] or '').lower().startswith(('zh', 'cmn'))
     except (ValueError, OSError):
-        return False
+        pass
+    # Windows: the packaged exe usually has no LC_*/LANG and locale.getlocale() is (None, None),
+    # so probe the system UI language directly. Primary language id 4 (0x04) is Chinese.
+    if os.name == 'nt':
+        try:
+            import ctypes
+            lang_id = ctypes.windll.kernel32.GetUserDefaultUILanguage()
+            return (lang_id & 0x3FF) == 0x04
+        except Exception:
+            return False
+    return False
 
 
 def _is_chinese(settings):
@@ -132,6 +154,7 @@ def install_core():
 def install_qt():
     """Qt launcher UI Simplified Chinese (patch the translator and the font)."""
     install_core()
+    _dbg('install_qt: start')
     from qt import logic
 
     logic.LANGS = ('zh_CN', 'pt_BR', 'en_US')
@@ -158,13 +181,17 @@ def install_qt():
         cn = _PAIRS.get(text)
         if cn is not None:
             try:
-                return cn.format(**fmt)
+                out = cn.format(**fmt)
             except (KeyError, IndexError):
-                return cn
+                out = cn
+            _dbg(f'_call zh: {key!r} -> {out!r}')
+            return out
+        _dbg(f'_call zh (no pair): {key!r} text={text!r}')
         return text
 
     logic.Translator.__init__ = _init
     logic.Translator.__call__ = _call
+    _dbg('install_qt: Translator.__call__ patched, pairs=%d' % len(_PAIRS))
 
     # -- pair((en, pt)): used for choice labels; translate when Chinese.
     original_pair = logic.Translator.pair
