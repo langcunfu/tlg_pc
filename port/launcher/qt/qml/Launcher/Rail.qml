@@ -48,10 +48,10 @@ Rectangle {
         Row {
             spacing: 6; width: parent.width
             Repeater {
-                model: [ { code: "pt_BR", label: "PT-BR" }, { code: "en_US", label: "EN-US" } ]
+                model: [ { code: "zh_CN", label: "中文" }, { code: "pt_BR", label: "PT-BR" }, { code: "en_US", label: "EN-US" } ]
                 Rectangle {
                     readonly property bool on: Backend.lang === modelData.code
-                    width: (parent.width - 6) / 2; height: 34; radius: 8
+                    width: (parent.width - 12) / 3; height: 34; radius: 8
                     color: on ? Theme.navOn : "transparent"
                     border.width: 1; border.color: on ? Theme.smoke : Theme.chipLine
                     Text { anchors.centerIn: parent; text: modelData.label; color: parent.on ? "#fff" : Theme.textMuted

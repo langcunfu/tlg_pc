@@ -1,16 +1,11 @@
-# Builds the Linux and Windows packages on every push to main and publishes them as a new
+# Builds the Windows package on manual trigger (Actions tab) and publishes it as a new
 # release tagged vYYYY.MM.DD-<commit>, marked latest. Every release is kept as version history
-# (the old "nightly" release is removed). A pushed tag v* publishes that tag the same way.
-# No game or console file is ever built in or uploaded.
+# (the old "nightly" release is removed). No game or console file is ever built in or uploaded.
+# (Linux build removed locally; only manual trigger, no push/pull_request automation.)
 name: Build
 
 on:
-  push:
-    branches: [main]
-    tags: ['v*']
-  # Pull requests to main build both packages (artifacts only): the Release is left untouched.
-  pull_request:
-    branches: [main]
+  # Only manual trigger: run the build from the Actions tab.
   workflow_dispatch:
 
 concurrency:
@@ -21,70 +16,6 @@ permissions:
   contents: write
 
 jobs:
-  linux:
-    runs-on: ubuntu-24.04
-    defaults:
-      run:
-        working-directory: port
-    env:
-      CC: gcc-14
-      CXX: g++-14
-      PKG_CONFIG_PATH: /opt/tlgdeps/lib/pkgconfig:/opt/tlgdeps/lib64/pkgconfig:/opt/tlgdeps/lib/x86_64-linux-gnu/pkgconfig
-      CMAKE_PREFIX_PATH: /opt/tlgdeps
-      LD_LIBRARY_PATH: /opt/tlgdeps/lib:/opt/tlgdeps/lib64:/opt/tlgdeps/lib/x86_64-linux-gnu
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - name: System packages
-        run: |
-          sudo apt-get update -q
-          sudo apt-get install -y -q --no-install-recommends gcc-14 g++-14 cmake ninja-build pkg-config nasm \
-            curl git python3-venv python3-tk libvulkan-dev glslang-tools libboost-dev \
-            libxxhash-dev zlib1g-dev libx11-dev libxcb1-dev libxext-dev libxrandr-dev libxcursor-dev \
-            libxi-dev libxss-dev libxtst-dev libxkbcommon-dev libwayland-dev wayland-protocols \
-            libdecor-0-dev libegl-dev libgl-dev libdrm-dev libgbm-dev libpulse-dev libasound2-dev \
-            libpipewire-0.3-dev libudev-dev libdbus-1-dev libusb-1.0-0-dev
-      - name: Cache built libraries
-        id: deps
-        uses: actions/cache@v4
-        with:
-          path: /opt/tlgdeps
-          key: tlgdeps-ubuntu2404-${{ hashFiles('port/packaging/linux/build_deps.sh') }}
-      - name: Build libraries (SDL3, Zydis, fmt, FFmpeg)
-        if: steps.deps.outputs.cache-hit != 'true'
-        run: |
-          sudo mkdir -p /opt/tlgdeps && sudo chown "$USER" /opt/tlgdeps
-          bash packaging/linux/build_deps.sh
-      - name: Build
-        run: |
-          # Keep compilation progress visible while build.sh captures Ninja's full log.
-          (while sleep 30; do
-            echo "Build running: $(date -u +%H:%M:%S) UTC"
-            tail -n 2 out/gpu-build.log 2>/dev/null || true
-          done) &
-          progress_pid=$!
-          trap 'kill "$progress_pid" 2>/dev/null || true' EXIT
-          TLG_LTO=OFF TLG_PGO=off bash build.sh
-      - name: Package
-        run: bash packaging/linux/package.sh
-      - name: Smoke test (frozen Qt launcher)
-        # Opens the packaged launcher offscreen and renders a frame: a package whose launcher cannot
-        # start (missing Qt plugin, QML, font, translation) must not become a release.
-        run: |
-          set -euo pipefail
-          smoke=$(mktemp -d)
-          tar -C "$smoke" -xzf dist/tlg-linux-x86_64.tar.gz
-          out=$(QT_QPA_PLATFORM=offscreen timeout 120 "$smoke/tlg-linux-x86_64/The Last Guardian" --selftest 2>&1) || { echo "$out"; exit 1; }
-          echo "$out"
-          grep -qx 'selftest ok' <<<"$out"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: tlg-linux-x86_64
-          path: port/dist/tlg-linux-x86_64.tar.gz
-          if-no-files-found: error
-          retention-days: 3
-
   windows:
     runs-on: windows-latest
     defaults:
@@ -178,9 +109,9 @@ jobs:
           retention-days: 3
 
   release:
-    needs: [linux, windows]
-    # Only pushes publish (main -> vYYYY.MM.DD-<commit>, v* tags -> that tag); pull requests stop at the artifacts.
-    if: github.event_name == 'push'
+    needs: [windows]
+    # Manual triggers publish too: every build makes its own release (runs only if the Windows build succeeded).
+    if: success()
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -204,7 +135,7 @@ jobs:
         run: |
           set -euo pipefail
           ls -la dist
-          test -f dist/tlg-linux-x86_64.tar.gz && test -f dist/tlg-windows-x86_64.zip
+          test -f dist/tlg-windows-x86_64.zip
           short=${GITHUB_SHA::7}
           cat > notes.md <<NOTES
           Build automático do commit ${short}. **Nenhum arquivo do jogo incluído**: veja o README-player.md dentro do pacote para o que copiar do seu PS4.
@@ -212,7 +143,6 @@ jobs:
 
           ☕ Apoie o desenvolvimento / Support development: [Buy me a coffee](https://buymeacoffee.com/hayatog)
 
-          - Linux x86-64 (glibc 2.39+): \`tlg-linux-x86_64.tar.gz\`
           - Windows 10/11 64-bit: \`tlg-windows-x86_64.zip\` (ainda não testado em jogo / not yet tested in game)
 
           NOTES
@@ -230,13 +160,13 @@ jobs:
             echo "tag=$tag" >> "$GITHUB_OUTPUT"; exit 0
           fi
           # SHA256SUMS: the launcher's updater checks the downloaded package against it.
-          (cd dist && sha256sum tlg-linux-x86_64.tar.gz tlg-windows-x86_64.zip > SHA256SUMS)
+          (cd dist && sha256sum tlg-windows-x86_64.zip > SHA256SUMS)
           # Upload into a draft first, so a failed upload never leaves a half-published release.
           # Releases are kept forever as version history; nothing here deletes one.
           gh release create "$tag" dist/* --draft --target "$GITHUB_SHA" \
             --title "$tag ($(date -u +%Y-%m-%d) · ${short})" --notes-file notes.md
           n=$(gh release view "$tag" --json assets --jq '.assets | length')
-          [[ $n -ge 3 ]] || { echo "draft release has $n assets"; exit 1; }
+          [[ $n -ge 2 ]] || { echo "draft release has $n assets"; exit 1; }
           for try in 1 2 3; do
             gh release edit "$tag" --draft=false --latest && break
             sleep 10

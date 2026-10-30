@@ -22,6 +22,10 @@ from tkinter import filedialog, messagebox, ttk
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import logtail  # noqa: E402
 import tlg_run  # noqa: E402
+# Simplified-Chinese localization adapter (upstream source stays untouched).
+import tlg_localization as _zh  # noqa: E402
+_zh.install_core()   # in-game Chinese (prepare/content.bin) applies for --play/--script too
+# Tk UI patch (install_classic) runs in main() after Launcher is defined; kept minimal to track upstream.
 
 TEXT = {
     'journey': ('Journey', 'Jornada'),
@@ -1137,6 +1141,7 @@ def main():
         ttk.Style().theme_use('clam')
     except tk.TclError:
         pass
+    _zh.install_classic()   # Simplified-Chinese UI patch (in-game core applied at import)
     Launcher(root)
     root.mainloop()
 
