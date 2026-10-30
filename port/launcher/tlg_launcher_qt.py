@@ -13,6 +13,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import tlg_run  # noqa: E402
+# Simplified-Chinese localization adapter (upstream source stays untouched).
+import tlg_localization as _zh  # noqa: E402
+_zh.install_core()   # in-game Chinese (prepare/content.bin) applies for --play/--script too
+# Qt UI patch (install_qt) runs in main() after qt.app is imported; kept minimal to track upstream.
 
 
 def main():
@@ -47,6 +51,7 @@ def main():
     except ImportError as error:
         sys.exit(f'PySide6 is missing ({error}). Install it with: pip install PySide6-Essentials\n'
                  f'PySide6 não encontrado. Instale com: pip install PySide6-Essentials')
+    _zh.install_qt()   # Simplified-Chinese UI patch (qt.logic/backend are now imported)
     launch_lock = None
     if tlg_run.FROZEN and os.name == 'nt':
         import update_install
