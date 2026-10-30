@@ -181,8 +181,17 @@ def install_qt():
     # -- Backend.lang: the QML language buttons compare `Backend.lang === modelData.code`.
     #    Upstream returns only pt_BR/en_US; report zh_CN when the interface is Chinese so the
     #    Chinese button lights up and `lang` re-evaluates on switch.
+    #
+    #    `lang` is a PySide6 @Property: replacing the class attribute with a plain function
+    #    does NOT change what QML sees (the metaobject caches the getter at class time). We
+    #    must re-declare a real @Property before the Backend is ever instantiated. install_qt
+    #    runs after `from qt.app import App` but before `App()`, so Backend is not yet built.
+    #    Guarded in try/except: if the re-declaration is not possible on a given PySide6, the
+    #    Translator patches above (the actual translation) still apply and only the Rail
+    #    button highlight is affected.
     try:
         from qt.backend import Backend
+        from PySide6.QtCore import Property
     except Exception:
         Backend = None
     if Backend is not None:
@@ -191,9 +200,14 @@ def install_qt():
         def _lang(self):
             if _is_chinese(self.settings):
                 return 'zh_CN'
+            # fall back to the upstream getter (the old Property object, or its fget)
+            if hasattr(original_lang, 'fget'):
+                return original_lang.fget(self)
             return original_lang(self)
 
-        Backend.lang = _lang
+        # Re-declare as a real @Property so the Qt metaobject (built at first instantiation,
+        # which is after this patch) sees the new getter and re-evaluates on langChanged.
+        Backend.lang = Property(str, fget=_lang, notify=Backend.langChanged)
 
     # -- Chinese-capable fonts: the adapter only runs when Simplified Chinese is wanted, so
     #    prefer a system font that renders CJK (Microsoft YaHei on Windows, Noto Sans CJK on
