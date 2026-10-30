@@ -32,7 +32,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 _installed = False
-_PAIRS = {}
+_KEYS = {}    # Qt translation key -> Simplified Chinese (from the zh dictionary 'keys')
+_PAIRS = {}   # English text -> Simplified Chinese (from the zh dictionary 'pairs')
 
 
 def _dbg(message):
@@ -48,26 +49,44 @@ def _dbg(message):
 
 
 def _load_pairs():
-    global _PAIRS
-    if not _PAIRS:
-        candidates = [HERE / 'tlg_localization-zh.json']
-        # PyInstaller (sys._MEIPASS) unpacks the bundle to _internal; the spec ships the
-        # dictionary at _internal/launcher/tlg_localization-zh.json, beside the module.
+    """Load the zh dictionary: `keys` (Qt key -> Chinese, for Translator.__call__ by key) and
+    `pairs` (English text -> Chinese, for text/pair lookups). Falls back to a legacy
+    pairs-only file. Empty on failure (translation then no-ops, never crashes)."""
+    global _PAIRS, _KEYS
+    if _PAIRS:
+        return _PAIRS
+    data = None
+    candidates = [HERE / 'tlg_localization-zh.json']
+    # PyInstaller (sys._MEIPASS) unpacks the bundle to _internal; the spec ships the
+    # dictionary at _internal/launcher/tlg_localization-zh.json, beside the module.
+    try:
+        meipass = Path(getattr(sys, '_MEIPASS', ''))
+        if meipass.is_dir():
+            candidates += [meipass / 'launcher' / 'tlg_localization-zh.json',
+                           meipass / 'tlg_localization-zh.json']
+    except (TypeError, OSError):
+        pass
+    for path in candidates:
         try:
-            meipass = Path(getattr(sys, '_MEIPASS', ''))
-            if meipass.is_dir():
-                candidates += [meipass / 'launcher' / 'tlg_localization-zh.json',
-                               meipass / 'tlg_localization-zh.json']
-        except (TypeError, OSError):
-            pass
-        for path in candidates:
-            try:
-                _PAIRS = json.loads(path.read_text(encoding='utf-8'))
-                return _PAIRS
-            except (OSError, ValueError):
-                continue
+            data = json.loads(path.read_text(encoding='utf-8'))
+            break
+        except (OSError, ValueError):
+            continue
+    if isinstance(data, dict) and 'keys' in data and 'pairs' in data:
+        _KEYS = data.get('keys', {})
+        _PAIRS = data.get('pairs', {})
+    elif isinstance(data, dict):
+        _PAIRS = data          # legacy pairs-only file
+    else:
         _PAIRS = {}
     return _PAIRS
+
+
+def _formatted(text, fmt):
+    try:
+        return text.format(**fmt)
+    except (KeyError, IndexError):
+        return text
 
 
 def _system_is_chinese(environ=None):
@@ -186,19 +205,24 @@ def install_qt():
         original_init(self, settings, strings, tk)
 
     def _call(self, key, **fmt):
+        # XDGAME-style: when Chinese, prefer the by-key table (covers backports/control texts
+        # whose keys never reach the English text), then the Tk (en, pt) table, then fall back
+        # to translating the English text the upstream translator picked.
+        if _is_chinese(self.settings):
+            cn = _KEYS.get(key)
+            if cn is not None:
+                return _formatted(cn, fmt)
+            tk = getattr(self, 'tk', None)
+            if tk and key in tk:
+                entry = tk[key]
+                return _formatted(_PAIRS.get(entry[0], entry[0]), fmt)
         text = original_call(self, key, **fmt)
         if not _is_chinese(self.settings):
             return text
-        # text is the English (or pt) string the upstream translator picked; if it has a
-        # Chinese translation in the dictionary, return that instead.
         cn = _PAIRS.get(text)
         if cn is not None:
-            try:
-                out = cn.format(**fmt)
-            except (KeyError, IndexError):
-                out = cn
-            _dbg(f'_call zh: {key!r} -> {out!r}')
-            return out
+            _dbg(f'_call zh: {key!r} -> {cn!r}')
+            return _formatted(cn, fmt)
         _dbg(f'_call zh (no pair): {key!r} text={text!r}')
         return text
 
@@ -265,7 +289,8 @@ def install_qt():
         def _load_fonts():
             display, text = original_load()
             from PySide6.QtGui import QFontDatabase, QFont
-            # a bundled CJK font in qt/fonts wins if present (e.g. a user-provided .ttf)
+            # a bundled CJK font in qt/fonts wins if present (XDGAME ships XDGAME-TLG-SC.ttf);
+            # use it for display and text so headers render in Chinese too.
             bundled = None
             for path in sorted((qapp.HERE / 'fonts').glob('*.ttf')):
                 ident = QFontDatabase.addApplicationFont(str(path))
@@ -276,7 +301,9 @@ def install_qt():
                             break
                 if bundled:
                     break
-            family = bundled or next((n for n in _CJK if QFont(n).exactMatch()), None)
+            if bundled:
+                return (bundled, bundled)
+            family = next((n for n in _CJK if QFont(n).exactMatch()), None)
             return (display, family) if family else (display, text)
 
         qapp.load_fonts = _load_fonts
